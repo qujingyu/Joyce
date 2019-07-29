@@ -1,0 +1,111 @@
+from pymatgen.io.vasp.inputs import Poscar,Incar
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from pymatgen.io.vasp.outputs import Vasprun,VolumetricData
+from pymatgen.core.composition import Composition
+from pymatgen.symmetry.bandstructure import HighSymmKpath
+from optparse import OptionParser
+from operator import add
+from vasprun import vasprun
+import json,os
+import numpy as np
+
+def get_subdir(a_dir):
+    return sorted([name for name in os.listdir(a_dir)
+            if os.path.isdir(os.path.join(a_dir, name))])
+#-------------------------------------------------------------------------------------------------
+parser = OptionParser()
+parser.add_option("-d",  "--dir", dest='dir', default='.',
+                  help="by directory")
+(options, args) = parser.parse_args()
+#-----------------------------------------------------------------------------------------------------
+output = []  
+dirs = get_subdir(options.dir)
+os.chdir(options.dir)
+for dir in dirs:
+    #os.system("pwd")
+    os.system("python ~/code/vasprun.py -v "+dir+"/dielectric-vasprun.xml" +" --dyn > epsilon")
+    os.chdir(dir+'/Dielec/')
+    os.system('~/code/IR-inten_script')
+    os.chdir("../../")
+    data = {}
+    data["meta"] ={}
+    data['k_total'] = []
+    data["k_electronic"] = []
+    data["k_poly"] = []
+    data["bornchrg"]= []
+    data["k_mode"]= []
+    data["eigen"]= [] 
+    data["meta"]['formula'] = []
+    data["meta"]['bandgap'] = []
+    data["meta"]['POSCAR'] = []
+    data["meta"]['space group number'] = []
+    data["meta"]['point group'] = []
+    data["meta"]["POTCAR"] = []
+    data["meta"]["INCAR"] = []
+    data["meta"]["K_path"] = []
+    data["meta"]["K_density"] = [300]
+    contcar = dir+'/Dielec/POSCAR'
+    incar = dir + '/Dielec/INCAR'
+    path = dir+'/static-vasprun.xml'
+    path_dielec=dir+'/dielectric-vasprun.xml'
+    path_band = dir+'/band-vasprun.xml'
+    file_path = dir + '/Dielec/BornChrgs'
+    file_path1 = './epsilon'
+    file_path2 = dir + '/Dielec/NormalModes'
+    try:
+        if vasprun(path).error:
+            print('vasp calculation is not converged')
+        else:
+            vaspcal = Vasprun(path)
+            p = Poscar.from_file(contcar)#vaspcal.structures
+#            new_poscar=VolumetricData.parse_file(path)
+#            print(new_poscar)
+            vasprun_dielec = Vasprun(path_dielec)
+            vaspcal_band= Vasprun(path_band)
+            incar_file = Incar.from_file(incar)
+            eigen = Vasprun(path_dielec,parse_eigen=True)
+            file = open(file_path)
+            born = file.read()
+            file1 = open(file_path1)
+            mode = file1.read()   
+            file2 = open(file_path2)
+            eigen = file2.read()
+            dielectric_static=vasprun_dielec.epsilon_static
+            dielectric_static_wolfe=vasprun_dielec.epsilon_static_wolfe
+            dielectric_ionic= vasprun_dielec.epsilon_ionic
+            dielectric_total=[]
+            b1 = np.asarray(dielectric_ionic)
+            b2= np.asarray(dielectric_static)
+            d=[dielectric_total.append(list( map(add, dielectric_ionic[o], dielectric_static[o]) )) for o in r
+ange(len(dielectric_static))]
+            #eigenvalue = eigen.normalmode_eigenvals
+            bandgap=vaspcal_band.eigenvalue_band_properties
+            SG=SpacegroupAnalyzer(p.structure,symprec=0.06, angle_tolerance=5)
+            struc= SG.get_primitive_standard_structure()
+            HSK=HighSymmKpath(struc)
+            formula=struc.formula
+            comp = Composition(str(formula))
+            space_group_no = SG.get_space_group_number()
+            space_group_symbol = SG.get_point_group_symbol()
+            potcar = vaspcal.potcar_symbols
+            data["meta"]['formula'].append(comp.get_reduced_formula_and_factor())
+            data["meta"]['bandgap'].append(bandgap[0:1])
+            data["meta"]['POSCAR'].append(str(p))
+            data["k_electronic"].append(dielectric_static)
+            data["k_total"].append(dielectric_total)
+            data["k_poly"].append(np.trace(b1)/3+np.trace(b2)/3)
+            data["bornchrg"].append(str(born))
+            data["k_mode"].append(mode)
+            data["eigen"].append(eigen)
+            data["meta"]["space group number"].append(int(space_group_no))
+            data["meta"]["point group"].append(str(space_group_symbol))
+            data["meta"]["POTCAR"].append(str(potcar))
+            data["meta"]["INCAR"].append(str(incar_file))
+            data["meta"]["K_path"].append(str(HSK.kpath))
+            output.append(data)
+   # except:
+    except Exception as e:
+        print (e)
+ #      print('vasp error in ', dir)
+with open('data.txt', 'w') as outfile:  
+    json.dump(output, outfile,indent=4)
